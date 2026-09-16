@@ -1,0 +1,23 @@
+# Git 文件属性配置
+
+# ---------- 批处理文件必须按二进制原样存取 ----------
+# start.bat 是 **GBK 编码 + CRLF 换行**的，这两点都不能动：
+#   - 改成 UTF-8 会让 cmd.exe 解析错位，双击后满屏报
+#     "'o' 不是内部或外部命令"（详见 start.bat 里的注释）
+#   - 换行符被转换也可能影响批处理的解析
+# 所以告诉 Git 不要碰它，原样存、原样取。
+*.bat -text
+*.cmd -text
+
+# ---------- 文本文件统一用 LF 存储 ----------
+# 仓库里统一成 LF，检出时由 Git 按各人系统的习惯决定要不要转成 CRLF。
+# 这样在 Windows 和 Linux 上协作时不会因为换行符不同产生无意义的整文件 diff。
+* text=auto
+
+# ---------- 这些是真二进制，不要做任何文本处理 ----------
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.png binary
+*.jpg binary
+*.ico binary

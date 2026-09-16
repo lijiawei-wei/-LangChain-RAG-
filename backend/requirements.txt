@@ -1,0 +1,51 @@
+# ============================================================
+# 后端依赖清单（版本已用 PyPI 官方 API 核实，均支持 Python 3.14）
+#
+# 重要：本项目刻意不使用 langchain-community / langchain-classic
+#   原因：langchain-community 已被官方弃用并归档为只读，
+#         langchain-classic 处于维护模式（计划 2.0 移除）。
+#   替代方案：自研 4 个轻量适配器（见 app/rag/embeddings.py、
+#            reranker.py、bm25.py、fusion.py）+ LCEL 编排。
+# ============================================================
+
+# ---------- LangChain 核心编排 ----------
+langchain==1.4.0
+langchain-core==1.6.3
+langchain-openai==1.6.2
+langchain-text-splitters==1.1.2
+langchain-chroma==1.1.0
+chromadb==1.5.9
+
+# ---------- Web 框架 ----------
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+python-multipart==0.0.32
+
+# ---------- 数据层 ----------
+sqlalchemy==2.0.53
+pydantic==2.13.5
+pydantic-settings==2.15.0
+
+# ---------- 认证 ----------
+# 不用 passlib：已停止维护，且与 bcrypt 4+ 不兼容
+PyJWT==2.14.0
+bcrypt==5.0.0
+
+# ---------- 文档解析 ----------
+PyMuPDF==1.28.2
+python-docx==1.2.0
+openpyxl==3.1.5
+
+# ---------- 模型与检索 ----------
+dashscope==1.27.5
+rank-bm25==0.2.2
+jieba==0.42.1
+
+# ---------- 工具 ----------
+httpx==0.28.1
+tenacity==9.1.4
+python-dotenv==1.2.3
+
+# ---------- 测试 ----------
+pytest==9.1.1
+pytest-asyncio==1.4.0

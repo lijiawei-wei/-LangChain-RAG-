@@ -1,0 +1,49 @@
+# ---------- 密钥与本地配置 ----------
+# .env 里是真实的 API Key 和 JWT 密钥，绝对不能提交
+.env
+.env.local
+*.env
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---------- 运行期数据 ----------
+# 上传的原文件、向量库、SQLite 数据库都是本机产生的，不进版本库
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+chroma_db/
+
+# ---------- Node / 前端 ----------
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+npm-debug.log*
+yarn-error.log*
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---------- 日志 ----------
+*.log
+logs/
+
+# ---------- 开发工具的本机配置 ----------
+# 里面是这台机器上的编辑器/工具偏好设置，换台电脑就不适用了，不该进版本库
+.claude/

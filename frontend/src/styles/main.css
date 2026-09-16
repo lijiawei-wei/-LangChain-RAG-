@@ -1,0 +1,75 @@
+/* 全局样式：只放最基础的复位和变量，具体样式写在各自的组件里 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Microsoft YaHei', 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  color: #303133;
+  background-color: #f5f7fa;
+  /* 让字体渲染更平滑，中文看起来更舒服 */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 认证页（登录/注册）的公共样式 ---------- */
+.auth-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.auth-card {
+  width: 400px;
+  padding: 40px 36px 32px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
+.auth-title {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 600;
+  text-align: center;
+  color: #303133;
+}
+
+.auth-subtitle {
+  margin: 0 0 28px;
+  font-size: 13px;
+  text-align: center;
+  color: #909399;
+}
+
+.auth-footer {
+  margin-top: 18px;
+  font-size: 13px;
+  text-align: center;
+  color: #909399;
+}
+
+.auth-footer a {
+  color: #667eea;
+  text-decoration: none;
+}
+
+.auth-footer a:hover {
+  text-decoration: underline;
+}
+
+/* 提交按钮占满整行 */
+.auth-submit {
+  width: 100%;
+}
