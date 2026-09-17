@@ -50,8 +50,17 @@ def fake_stream(monkeypatch):
     """把流式流水线换成假的。"""
     calls = []
 
-    async def _fake_answer_stream(question, history, kb_ids, cancel_event=None):
-        calls.append({"question": question, "history": history, "kb_ids": kb_ids})
+    # 参数要和 pipeline.answer_stream 的真实签名保持一致，
+    # 少写一个的话真实调用传进来就会报 TypeError
+    async def _fake_answer_stream(question, history, kb_ids, cancel_event=None, kb_summary=""):
+        calls.append(
+            {
+                "question": question,
+                "history": history,
+                "kb_ids": kb_ids,
+                "kb_summary": kb_summary,
+            }
+        )
 
         yield "prepared", {
             "query": question,
@@ -266,7 +275,7 @@ class TestStreamErrorHandling:
         如果任由异常抛出，连接会直接断掉，前端只能看到"网络错误"，
         既不知道原因，界面也可能永远转圈。
         """
-        async def _boom(question, history, kb_ids, cancel_event=None):
+        async def _boom(question, history, kb_ids, cancel_event=None, kb_summary=""):
             yield "prepared", {"query": question, "citations": [], "stage_latency": {}, "is_empty": False}
             raise RuntimeError("模型服务不可用")
 
@@ -286,7 +295,7 @@ class TestStreamErrorHandling:
 
     def test_error_before_any_token(self, client, buyer, sample_kb, monkeypatch):
         """检索阶段就失败的情况。"""
-        async def _fail_early(question, history, kb_ids, cancel_event=None):
+        async def _fail_early(question, history, kb_ids, cancel_event=None, kb_summary=""):
             raise RuntimeError("向量库连不上")
             yield  # pragma: no cover  让函数成为异步生成器
 

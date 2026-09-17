@@ -224,8 +224,18 @@ def fake_pipeline(monkeypatch):
     """
     calls = []
 
-    async def _fake_answer(question, history, kb_ids):
-        calls.append({"question": question, "history": history, "kb_ids": kb_ids})
+    # 参数要和 pipeline.answer 的真实签名保持一致。
+    # 少写一个参数的话，真实调用传进来就会报 TypeError——
+    # 这个错误只在走完整流程的测试里才会暴露，很容易漏
+    async def _fake_answer(question, history, kb_ids, kb_summary=""):
+        calls.append(
+            {
+                "question": question,
+                "history": history,
+                "kb_ids": kb_ids,
+                "kb_summary": kb_summary,
+            }
+        )
 
         return pipeline.ChatResult(
             answer=f"关于「{question}」，资料显示是这样的 [1]。",

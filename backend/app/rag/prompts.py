@@ -31,12 +31,83 @@ RAG_SYSTEM_PROMPT = """你是一个电商平台的商品知识库助手，负责
 RAG_USER_TEMPLATE = "{question}"
 
 # 完全没有检索到任何资料时用的提示词（不调模型，直接返回固定答复）
+#
+# 注意这段话会在两种情况下出现，写的时候要兼顾：
+#   1. 用户问的是商品，但资料里确实没有 → 需要告诉他"资料里没有"
+#   2. 用户问的是完全不着边际的东西 → 需要告诉他"我能答什么"
+# 所以除了说"没找到"，还要**说明自己是什么、能答哪类问题**，
+# 否则用户（尤其是答辩时的老师）会以为系统坏了。
 NO_CONTEXT_REPLY = (
-    "抱歉，我在知识库里没有找到与您的问题相关的资料。\n\n"
-    "您可以：\n"
-    "- 换个说法再问一次\n"
+    "抱歉，我在知识库里没有找到和这个问题相关的资料。\n\n"
+    "我是**商品知识库助手**，只能回答已录入资料里的内容。你可以：\n"
+    "- 换个说法再问一次（比如把「这个」换成具体商品名）\n"
     "- 确认一下要咨询的商品是否已经录入知识库"
 )
+
+
+# ============================================================
+# 寒暄类问题的固定回复
+# ============================================================
+# 这几段话**不经过大模型**，直接返回。原因见 rag/smalltalk.py 的说明。
+#
+# 为什么要单独写一份而不是让大模型即兴发挥：
+# 寒暄是有限可枚举的，用固定文案有三个好处——响应是瞬时的（不用等模型）、
+# 每次回答都一样（演示时不会出意外）、不花一分钱。
+
+SMALLTALK_GREETING = "你好！我是这个商城的商品知识库助手，有什么想了解的商品吗？"
+
+# 能力说明。这段话是"用户不知道能问什么"时的主要引导
+SMALLTALK_CAPABILITY = (
+    "我可以根据知识库里的商品资料回答问题，比如：\n\n"
+    "- 商品的价格、规格参数\n"
+    "- 售后服务、保修政策\n"
+    "- 包装清单、使用说明\n\n"
+    "直接说出商品名加上你想问的点就行，比如「星耀 X9 Pro 的电池容量是多少」。"
+)
+
+SMALLTALK_THANKS = "不客气～还有别的想了解的吗？"
+
+SMALLTALK_FAREWELL = "再见！有需要随时来找我 👋"
+
+# 自我介绍模板。{kb_summary} 由 chat_service 填进来——
+# 那里能拿到数据库会话，可以查出知识库里到底有哪些商品。
+# 把自己"知道什么"具体列出来，比干巴巴说"我是商品助手"有用得多，
+# 用户一眼就知道该问什么。
+SMALLTALK_IDENTITY_TEMPLATE = """我是这个商城的**商品知识库助手** 👋
+
+我可以根据已录入的商品资料回答问题，比如价格、规格参数、保修政策这些。
+{kb_summary}
+
+有什么想了解的商品，直接问我就行～"""
+
+# 知识库里一件商品都没有时的兜底（理论上很少出现，因为提问前会校验知识库非空）
+SMALLTALK_NO_KB_HINT = "目前知识库里还没有录入商品资料，请联系管理员上传。"
+
+
+def build_identity_reply(kb_summary: str = "") -> str:
+    """拼出自我介绍。kb_summary 为空时给一句兜底说明。"""
+    hint = kb_summary.strip() or SMALLTALK_NO_KB_HINT
+    return SMALLTALK_IDENTITY_TEMPLATE.format(kb_summary=hint)
+
+
+def build_smalltalk_reply(category: str, kb_summary: str = "") -> str:
+    """按类别取对应的固定回复。"""
+    if category == "identity":
+        # 问"你是谁"和问"你能做什么"的用户意图是一样的，
+        # 都想知道这个助手能帮上什么忙，所以共用同一段介绍
+        return build_identity_reply(kb_summary)
+    if category == "capability":
+        return build_identity_reply(kb_summary)
+    if category == "greeting":
+        return SMALLTALK_GREETING
+    if category == "thanks":
+        return SMALLTALK_THANKS
+    if category == "farewell":
+        return SMALLTALK_FAREWELL
+
+    # 理论上不会走到这里（smalltalk.py 的类别和上面一一对应），
+    # 但真出现了也不能让问答崩掉，给个安全的话术
+    return SMALLTALK_GREETING
 
 
 # ============================================================

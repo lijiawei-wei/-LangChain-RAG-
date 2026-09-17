@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 from functools import lru_cache
+from pathlib import Path
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core import cache as answer_cache
 from app.core import rate_limit
 from app.core.config import settings
+from app.models.document import Document, DocumentStatus
 from app.models.knowledge_base import KnowledgeBase
 from app.models.qa_log import QALog
 from app.models.user import User
@@ -140,6 +142,75 @@ def resolve_kb_ids(db: Session, kb_id: int | None) -> list[int]:
     return all_ids
 
 
+# 从文件名里去掉这些后缀，剩下的就是商品名
+# （「星耀X9Pro手机产品资料.md」→「星耀X9Pro手机」）
+_PRODUCT_NAME_SUFFIXES = (
+    "产品资料", "参数表", "规格表", "说明书", "使用手册", "介绍", "手册", "资料",
+)
+
+# 自我介绍里最多列几个商品名。列太多会把消息撑得很长，反而不好读
+_MAX_LISTED_PRODUCTS = 6
+
+
+def _product_names(filenames: list[str]) -> list[str]:
+    """从文件名里提取商品名。
+
+    数据来源是文档文件名而不是别的地方——**因为不能改表结构**
+    （项目用的是 create_all，没有迁移机制，加字段会让已有的数据库直接报错）。
+    文件名虽然带后缀和扩展名，但去掉之后基本就是商品名，够用了。
+    """
+    cleaned: list[str] = []
+    for filename in filenames:
+        stem = Path(filename).stem
+        for suffix in _PRODUCT_NAME_SUFFIXES:
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        stem = stem.strip("_- ")
+        if stem and stem not in cleaned:
+            cleaned.append(stem)
+
+    # 去掉"是别人前缀"的短名字：
+    # 同一个商品往往既有「XX产品资料.md」又有「XX参数表.xlsx」，
+    # 去掉后缀后就会得到「XX」和「XX笔记本」两个名字，其实是同一个东西
+    return [
+        name
+        for name in cleaned
+        if not any(name != other and name in other for other in cleaned)
+    ]
+
+
+def build_kb_summary(db: Session, kb_ids: list[int]) -> str:
+    """拼一句"知识库里收录了哪些商品"，供自我介绍使用。
+
+    **每次提问都会调一次**，多一次数据库查询。之所以不在乎这点开销：
+    整个问答流程里有两次大模型调用和一次向量检索，相比之下一次本地
+    SQLite 查询（毫秒级）可以忽略。用一个查询换代码简单，是划算的。
+    """
+    if not kb_ids:
+        return ""
+
+    filenames = list(
+        db.scalars(
+            select(Document.filename)
+            .where(Document.kb_id.in_(kb_ids), Document.status == DocumentStatus.READY)
+            .order_by(Document.id)
+        ).all()
+    )
+    if not filenames:
+        return ""
+
+    names = _product_names(filenames)
+    total = len(filenames)
+
+    if not names:
+        return f"目前收录了 {total} 份商品资料。"
+
+    shown = "、".join(names[:_MAX_LISTED_PRODUCTS])
+    ellipsis = "……" if len(names) > _MAX_LISTED_PRODUCTS else ""
+    return f"目前收录了 {total} 份商品资料，包括：{shown}{ellipsis}"
+
+
 async def ask(db: Session, user: User, request: ChatRequest) -> ChatResponse:
     """处理一次问答（非流式）。
 
@@ -200,6 +271,7 @@ async def ask(db: Session, user: User, request: ChatRequest) -> ChatResponse:
                 question=request.question,
                 history=history,
                 kb_ids=kb_ids,
+                kb_summary=build_kb_summary(db, kb_ids),
             )
         is_cache_hit = False
 
@@ -291,6 +363,9 @@ async def prepare_stream(db: Session, user: User, request: ChatRequest) -> dict:
         "kb_ids": kb_ids,
         "history": history,
         "user_message": user_message,
+        # 寒暄类问题的自我介绍里要列出收录了哪些商品，在这里先查好。
+        # 放在这个函数里而不是 ask_stream 里，是因为它已经拿到了 db 会话
+        "kb_summary": build_kb_summary(db, kb_ids),
     }
 
 
@@ -359,6 +434,7 @@ async def ask_stream(
                 history=history,
                 kb_ids=kb_ids,
                 cancel_event=cancel_event,
+                kb_summary=prepared["kb_summary"],
             ):
                 if event_name == "prepared":
                     # 检索完成，先把引用推出去

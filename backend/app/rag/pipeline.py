@@ -34,7 +34,13 @@ from app.rag.citations import (
 from app.rag.fusion import reciprocal_rank_fusion
 from app.rag.llm import get_llm
 from app.rag.memory import rewrite_query
-from app.rag.prompts import NO_CONTEXT_REPLY, RAG_SYSTEM_PROMPT, format_context
+from app.rag.prompts import (
+    NO_CONTEXT_REPLY,
+    RAG_SYSTEM_PROMPT,
+    build_smalltalk_reply,
+    format_context,
+)
+from app.rag.smalltalk import match_smalltalk
 from app.rag.reranker import rerank as rerank_documents
 
 logger = logging.getLogger(__name__)
@@ -63,6 +69,12 @@ class PreparedContext:
     citations: list[dict] = field(default_factory=list)
     context_text: str = ""
     stage_latency: dict[str, int] = field(default_factory=dict)
+
+    # 不需要检索和生成、直接返回的答复。
+    # 目前只有寒暄类问题会用到（见 rag/smalltalk.py）：这类问题知识库里
+    # 必然没有答案，走完整流程只会得到一句"没找到相关资料"，体验很差。
+    # 有值时 answer() / answer_stream() 会跳过模型，直接把它当作回答返回。
+    direct_reply: str | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -224,14 +236,35 @@ async def prepare(
     question: str,
     history: list[dict] | None,
     kb_ids: list[int],
+    kb_summary: str = "",
 ) -> PreparedContext:
-    """准备阶段：查询改写 → 检索 → 构建引用 → 拼上下文。
+    """准备阶段：寒暄判定 → 查询改写 → 检索 → 构建引用 → 拼上下文。
 
     拆成独立函数是为了让流式和非流式两条路径共用同一套准备逻辑，
     避免两边实现不一致导致「流式答得好、非流式答得差」这种诡异问题。
+
+    kb_summary 是"知识库里有哪些商品"的一句话摘要，只在回答寒暄类问题时
+    用得上（自我介绍里要列出收录了什么）。由 chat_service 那边查好传进来——
+    这一层是纯 RAG 逻辑，拿不到数据库会话。
     """
     stage: dict[str, int] = {}
     total_start = time.perf_counter()
+
+    # ---------- ⓪ 寒暄判定 ----------
+    # 放在最前面是有意义的：这类问题知识库里必然没有答案，
+    # 硬走一遍检索只会得到"没找到相关资料"，让用户以为系统坏了。
+    # 命中就直接返回固定答复，**连查询改写都不做**——改写本身要调一次模型，
+    # 对"你是谁"这种问题纯属浪费
+    category = match_smalltalk(question)
+    if category is not None:
+        stage["smalltalk"] = 0
+        stage["prepare_total"] = int((time.perf_counter() - total_start) * 1000)
+        logger.info("识别为寒暄类问题（%s），直接返回固定答复", category)
+        return PreparedContext(
+            query=question,
+            stage_latency=stage,
+            direct_reply=build_smalltalk_reply(category, kb_summary),
+        )
 
     # ---------- ① 查询改写 ----------
     t0 = time.perf_counter()
@@ -297,6 +330,7 @@ async def answer(
     question: str,
     history: list[dict] | None,
     kb_ids: list[int],
+    kb_summary: str = "",
 ) -> ChatResult:
     """非流式问答：一次性返回完整回答。
 
@@ -305,7 +339,17 @@ async def answer(
     """
     overall_start = time.perf_counter()
 
-    prepared = await prepare(question, history, kb_ids)
+    prepared = await prepare(question, history, kb_ids, kb_summary)
+
+    # 寒暄类问题（你好、你是谁…）：直接返回固定答复，不检索也不调模型
+    if prepared.direct_reply is not None:
+        return ChatResult(
+            answer=prepared.direct_reply,
+            citations=[],
+            retrieved_query=prepared.query,
+            latency_ms=int((time.perf_counter() - overall_start) * 1000),
+            stage_latency=prepared.stage_latency,
+        )
 
     # 一条资料都没检索到，直接返回固定答复，不用调模型浪费钱
     if prepared.is_empty:
@@ -347,6 +391,7 @@ async def answer_stream(
     history: list[dict] | None,
     kb_ids: list[int],
     cancel_event: asyncio.Event | None = None,
+    kb_summary: str = "",
 ):
     """流式问答：逐块产出结果，供 SSE 推送给前端。
 
@@ -363,7 +408,7 @@ async def answer_stream(
     cancel_event 用于客户端断开时中断生成，避免白白跑完再丢弃。
     """
     overall_start = time.perf_counter()
-    prepared = await prepare(question, history, kb_ids)
+    prepared = await prepare(question, history, kb_ids, kb_summary)
 
     yield "prepared", {
         "query": prepared.query,
@@ -371,6 +416,21 @@ async def answer_stream(
         "stage_latency": prepared.stage_latency,
         "is_empty": prepared.is_empty,
     }
+
+    # 寒暄类问题（你好、你是谁…）：一次把整段答复推出去，不调模型。
+    # 前端拿到后立刻整段显示，用户感觉是"秒回"
+    if prepared.direct_reply is not None:
+        yield "token", {"delta": prepared.direct_reply}
+        yield "finished", {
+            "answer": prepared.direct_reply,
+            "citations": [],
+            "query": prepared.query,
+            "latency_ms": int((time.perf_counter() - overall_start) * 1000),
+            "stage_latency": prepared.stage_latency,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+        return
 
     # 一条资料都没检索到：直接给出固定答复，不用调模型
     if prepared.is_empty:
