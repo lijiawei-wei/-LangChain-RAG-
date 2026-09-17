@@ -26,7 +26,7 @@ import { listAllKnowledgeBases } from '@/api/kb'
 import CitationPanel from '@/components/CitationPanel.vue'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { useUserStore } from '@/stores/user'
-import { formatRelativeTime } from '@/utils/format'
+import { describeScope, formatRelativeTime } from '@/utils/format'
 import { streamChat } from '@/utils/sse'
 
 const userStore = useUserStore()
@@ -74,6 +74,19 @@ let messageListRef = null
 
 /** 输入框下方的提示文字 */
 const canSend = computed(() => input.value.trim().length > 0 && !sending.value)
+
+/**
+ * 检索范围的显示文案，输入框下方和空状态都要用。
+ *
+ * 把知识库名字写出来是有意为之：实测有人建了新知识库、资料也传好了，
+ * 但检索范围还停在别的库上，问什么都答不上来，界面上却看不出它在哪找。
+ * （列表还没加载出来的时候退回"指定知识库"，至少不会说错成"全部"）
+ */
+const scopeLabel = computed(() => {
+  if (!selectedKbId.value) return '全部知识库'
+  const kb = knowledgeBases.value.find((item) => item.id === selectedKbId.value)
+  return kb ? describeScope(kb.name) : '指定知识库'
+})
 
 // ---------- 初始化 ----------
 onMounted(async () => {
@@ -579,6 +592,7 @@ onUnmounted(() => {
           <el-icon class="welcome-icon"><ChatDotRound /></el-icon>
           <h3>你好，我是商品知识库助手</h3>
           <p>问我任何关于商品的问题，我会查阅知识库里的资料回答，并告诉你答案出自哪里。</p>
+          <p class="welcome-scope">当前检索范围：{{ scopeLabel }}</p>
           <div class="examples">
             <div class="examples-title">可以试试这样问：</div>
             <el-tag
@@ -716,9 +730,7 @@ onUnmounted(() => {
           @keydown="handleKeydown"
         />
         <div class="input-footer">
-          <span class="hint">
-            {{ selectedKbId ? '正在指定知识库内检索' : '正在全部知识库中检索' }}
-          </span>
+          <span class="hint">正在{{ scopeLabel }}中检索</span>
           <div class="actions">
             <el-button v-if="isStreaming" type="danger" plain @click="handleStop">
               <el-icon><VideoPause /></el-icon>停止生成
@@ -915,6 +927,12 @@ onUnmounted(() => {
   margin: 0;
   font-size: 13px;
   line-height: 1.8;
+}
+
+/* 检索范围单独一行，比说明文字显眼一点——它是用户答不上来时第一个该看的地方 */
+.welcome-scope {
+  margin-top: 10px !important;
+  color: #606266;
 }
 
 .examples {

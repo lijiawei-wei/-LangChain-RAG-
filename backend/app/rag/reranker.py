@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 # 这里故意压到 100：一次送太多会明显变慢，而且我们最多也就召回几十条
 MAX_DOCUMENTS_PER_CALL = 100
 
+# 判断"这个库里到底有没有相关内容"的分界线，取值是阈值的倍数。
+# 最高分连阈值的一半都够不到，就不该叫"分数偏低"，而是"没有信号"——
+# 具体依据见 rerank() 里的注释和 scripts/calibrate_threshold.py 的实测分布
+NO_SIGNAL_RATIO = 0.5
+
 
 class RerankAPIError(RuntimeError):
     """调用重排接口失败。"""
@@ -54,11 +59,10 @@ class DashScopeReranker(BaseDocumentCompressor):
     top_n: int = Field(default_factory=lambda: settings.RERANK_TOP_N)
 
     # 分数低于这个值的直接丢掉。
-    # 默认 0 表示不过滤——不是因为这个值合理，而是因为**还没有依据**。
-    # 实测 gte-rerank-v2 的分数分布很特别：相关内容的分数大约在 0.1~0.2，
-    # 不相关的接近 0，跟常见的 0~1 分布完全不同。
-    # 拍脑袋设 0.5 会把所有结果都过滤光。正确做法是用 M7 的评估模块
-    # 跑真实问题集来标定，在那之前宁可不过滤。
+    # 实测 gte-rerank-v2 的分数分布很特别：相关内容大约 0.15~0.31，
+    # 不相关的是 0.0，跟常见的 0~1 分布完全不同。
+    # 所以这个值**不能拍脑袋定**，是用 scripts/calibrate_threshold.py
+    # 跑真实问题集标定出来的，见 config.py 里 RERANK_SCORE_THRESHOLD 的说明。
     score_threshold: float = Field(default_factory=lambda: settings.RERANK_SCORE_THRESHOLD)
 
     # pydantic 模型默认不允许任意类型的字段，这里放开
@@ -130,9 +134,11 @@ class DashScopeReranker(BaseDocumentCompressor):
             return documents[:limit]
 
         reranked: list[Document] = []
+        best_score = 0.0
         for rank, item in enumerate(results, start=1):
             index = item["index"]
             score = float(item["relevance_score"])
+            best_score = max(best_score, score)
 
             if score < self.score_threshold:
                 continue
@@ -147,15 +153,46 @@ class DashScopeReranker(BaseDocumentCompressor):
             doc.metadata["rerank_rank"] = rank
             reranked.append(doc)
 
-        # 全部被阈值过滤掉时，兜底返回原始结果的前几条。
-        # 为什么不让它返回空：返回空会让整个问答变成"没有找到资料"，
-        # 而实际上资料是有的、只是重排分数偏低。宁可给模型几条参考，
-        # 让它在提示词约束下自己判断，也不要直接拒答。
+        # 全部被阈值过滤掉时怎么处理，要分两种情况——**它们的含义完全不同**：
+        #
+        #   分数偏低：资料可能是有的，只是阈值卡得严（或者这个知识库的文风
+        #       比较特殊）。降级返回原始召回结果，让模型在提示词约束下自己判断。
+        #
+        #   完全没有信号：重排模型对每一条都给了接近 0 的分，说明这个库里
+        #       压根没有相关内容。这种情况把候选交给模型是有害的——模型只能
+        #       回一句"根据现有资料无法回答"，用户白等几秒，而且看不出问题
+        #       出在哪。实测的典型场景：在「手机数码」库里问服装尺码（资料
+        #       其实在「服装」库里），5 条候选最高分只有 0.0060，用户等了 7 秒
+        #       拿到一句"无法回答"，完全想不到是自己选错了检索范围。
+        #       返回空反而更好：直接走"没找到资料"那条路，瞬时返回，
+        #       文案里还会提醒他检查检索范围。
+        #
+        # 分界线取"阈值的一半"，依据是 scripts/calibrate_threshold.py 的实测
+        # 分数分布（30 道正样本 + 16 道负样本，见 docs/检索效果对比实验.md）：
+        #
+        #     有答案的问题   最高分最低也有 0.1301（中位 0.3840）
+        #     没答案的问题   最高分中位 0.0638，其中"完全不沾边"的接近 0
+        #
+        # 所以 0.05 这条线：正样本离它有 2.6 倍余量（不会误伤正常提问），
+        # 而"完全不沾边"的那类会被干净地拦掉。
+        # 注意判据不能写成"是否为 0"——实测无关问题的分数很少正好是 0，
+        # 而是 0.00x 这样的小数，按 0 判断等于没判断。
         if not reranked:
+            if best_score >= self.score_threshold * NO_SIGNAL_RATIO:
+                logger.info(
+                    "重排后所有结果都低于阈值 %.3f（最高分 %.4f），降级返回原始召回结果",
+                    self.score_threshold,
+                    best_score,
+                )
+                return documents[:limit]
+
             logger.info(
-                "重排后所有结果都低于阈值 %.3f，降级返回原始召回结果", self.score_threshold
+                "重排后最高分仅 %.4f（不足阈值的 %.0f%%），判定库里没有相关内容，"
+                "按未检索到资料处理",
+                best_score,
+                NO_SIGNAL_RATIO * 100,
             )
-            return documents[:limit]
+            return []
 
         return reranked
 

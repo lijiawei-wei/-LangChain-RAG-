@@ -98,3 +98,17 @@ export function formatDuration(ms) {
   if (n < 1000) return `${n} ms`
   return `${(n / 1000).toFixed(1)} s`
 }
+
+/**
+ * 描述当前检索范围。
+ *
+ * **为什么要把知识库名字直接写在界面上**：实测踩过一个坑——新建了「服装」
+ * 知识库、资料也传上去了，但顶部「检索范围」还停在「手机数码」，于是问什么
+ * 都答不上来，而界面上完全看不出它是在哪个库里找的。用户只会认为"系统坏了"。
+ *
+ * @param {string} kbName 选中的知识库名字；没选（检索全部）时传空
+ * @returns {string} 「服装」或 全部知识库
+ */
+export function describeScope(kbName) {
+  return kbName ? `「${kbName}」` : '全部知识库'
+}

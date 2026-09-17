@@ -272,6 +272,52 @@ class TestQALog:
         assert "1" in log.rerank_scores
 
 
+class TestNoContextReply:
+    """一条资料都检索不到时的答复。
+
+    这组测试直接跑 pipeline（不是假的夹具），但把检索那一步换成"返回空"，
+    所以**一次外部接口都不会调，也不花钱**——正好可以顺便验证
+    "没检索到就不该调模型"这件事。
+    """
+
+    @pytest.fixture
+    def empty_retrieval(self, monkeypatch):
+        """把检索结果固定成空。"""
+        from app.rag import pipeline
+
+        async def _empty(kb_ids, query):
+            return []
+
+        monkeypatch.setattr(pipeline, "retrieve", _empty)
+
+    @pytest.mark.asyncio
+    async def test_reply_is_fixed_text_without_calling_model(self, empty_retrieval):
+        """没资料就直接给固定答复：瞬时返回、不花一分钱。"""
+        from app.rag import pipeline
+        from app.rag.prompts import NO_CONTEXT_REPLY
+
+        result = await pipeline.answer("这款衣服怎么选码", None, [3])
+
+        assert result.answer == NO_CONTEXT_REPLY
+        assert result.citations == []
+        # token 为 0 就证明没调过模型
+        assert result.prompt_tokens == 0
+        assert result.completion_tokens == 0
+
+    def test_reply_points_at_the_scope_selector(self):
+        """固定答复里要提醒用户检查「检索范围」。
+
+        **这是修一个真实问题留下的**：资料放在「服装」知识库里，
+        但聊天页的检索范围还停在「手机数码」，于是问什么都答不上来。
+        原来的文案只说"没找到相关资料 / 换个说法再问"，用户照着做
+        （换了三四种问法）依然没结果——因为问题根本不在问法上。
+        现在第一句就让他去看检索范围。
+        """
+        from app.rag.prompts import NO_CONTEXT_REPLY
+
+        assert "检索范围" in NO_CONTEXT_REPLY
+
+
 # 需要管理员权限的地方直接用 conftest 里的 admin_headers 夹具。
 # 不要自己写「注册一个用户再改它的角色」这种取巧做法——
 # 那通常意味着绕过依赖注入去操作数据库，一不小心就改到真实库上去了。

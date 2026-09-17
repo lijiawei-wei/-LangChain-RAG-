@@ -12,6 +12,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  describeScope,
   formatDuration,
   formatNumber,
   formatTokens,
@@ -82,5 +83,19 @@ describe('formatDuration', () => {
   it('没有值时不能崩', () => {
     assert.equal(formatDuration(null), '—')
     assert.equal(formatDuration(undefined), '—')
+  })
+})
+
+describe('describeScope', () => {
+  it('选了知识库就把名字写出来', () => {
+    // 实测踩过：资料在「服装」库里，检索范围却停在「手机数码」，
+    // 问什么都答不上来。把名字写在界面上，用户一眼就能看出选错了
+    assert.equal(describeScope('服装'), '「服装」')
+  })
+
+  it('没选就是全部知识库', () => {
+    assert.equal(describeScope(''), '全部知识库')
+    assert.equal(describeScope(null), '全部知识库')
+    assert.equal(describeScope(undefined), '全部知识库')
   })
 })
